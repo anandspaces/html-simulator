@@ -1,8 +1,12 @@
 import sqlite3
+import logging
 from pathlib import Path
 from typing import Optional, List, Dict
 from datetime import datetime
 from contextlib import contextmanager
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 # Database file path
 DB_FILE = Path("simulations.db")
@@ -16,8 +20,9 @@ def get_db_connection():
     try:
         yield conn
         conn.commit()
-    except Exception:
+    except Exception as e:
         conn.rollback()
+        logger.error(f"Database error: {str(e)}", exc_info=True)
         raise
     finally:
         conn.close()
@@ -25,6 +30,7 @@ def get_db_connection():
 
 def init_db():
     """Initialize the database and create tables if they don't exist"""
+    logger.info("Initializing database...")
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
@@ -62,6 +68,8 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_topic 
             ON simulations(topic_id, chapter_id, subject_id, level)
         """)
+        
+        logger.info("Database initialized successfully")
 
 
 def insert_simulation(
@@ -77,6 +85,8 @@ def insert_simulation(
     file_path: str
 ) -> int:
     """Insert a new simulation record into the database"""
+    logger.info(f"Inserting simulation - Topic: {topic}, Subject: {subject}, Level: {level}")
+    
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
@@ -90,11 +100,15 @@ def insert_simulation(
             subject, subject_id, level, simulation_type, file_path
         ))
         
-        return cursor.lastrowid
+        sim_id = cursor.lastrowid
+        logger.info(f"Simulation inserted with ID: {sim_id}")
+        return sim_id
 
 
 def get_simulation_by_cache_key(cache_key: str) -> Optional[Dict]:
     """Get simulation record by cache key"""
+    logger.debug(f"Fetching simulation with cache_key: {cache_key}")
+    
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
@@ -112,8 +126,10 @@ def get_simulation_by_cache_key(cache_key: str) -> Optional[Dict]:
                 WHERE cache_key = ?
             """, (cache_key,))
             
+            logger.debug(f"Simulation found and access count updated for: {cache_key}")
             return dict(row)
         
+        logger.debug(f"No simulation found for cache_key: {cache_key}")
         return None
 
 
