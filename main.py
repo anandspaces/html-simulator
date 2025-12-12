@@ -74,17 +74,14 @@ app = FastAPI(title="HTML Simulator API", version="0.1.0", lifespan=lifespan)
 
 class SimulationRequest(BaseModel):
     topic: str
-    topicID: Union[int, str, None] = None
     topic_id: Union[int, str, None] = None
     chapter: str
-    chapterID: Union[int, str, None] = None
     chapter_id: Union[int, str, None] = None
     subject: str
-    subjectID: Union[int, str, None] = None
     subject_id: Union[int, str, None] = None
     level: int
     
-    @field_validator('topicID', 'topic_id', 'chapterID', 'chapter_id', 'subjectID', 'subject_id', mode='before')
+    @field_validator('topic_id', 'chapter_id', 'subject_id', mode='before')
     @classmethod
     def convert_to_int(cls, v):
         """Convert string IDs to integers"""
@@ -98,36 +95,10 @@ class SimulationRequest(BaseModel):
             except ValueError:
                 raise ValueError(f"ID must be a valid integer, got: {v}")
         return v
-    
-    def model_post_init(self, __context):
-        # Sync camelCase and snake_case versions
-        if self.topic_id is not None and self.topicID is None:
-            self.topicID = self.topic_id
-        elif self.topicID is not None and self.topic_id is None:
-            self.topic_id = self.topicID
-            
-        if self.chapter_id is not None and self.chapterID is None:
-            self.chapterID = self.chapter_id
-        elif self.chapterID is not None and self.chapter_id is None:
-            self.chapter_id = self.chapterID
-            
-        if self.subject_id is not None and self.subjectID is None:
-            self.subjectID = self.subject_id
-        elif self.subjectID is not None and self.subject_id is None:
-            self.subject_id = self.subjectID
-        
-        # Ensure at least one version is provided for each field
-        if self.topicID is None:
-            raise ValueError("Either topicID or topic_id must be provided")
-        if self.chapterID is None:
-            raise ValueError("Either chapterID or chapter_id must be provided")
-        if self.subjectID is None:
-            raise ValueError("Either subjectID or subject_id must be provided")
-
 
 def generate_cache_key(request: SimulationRequest) -> str:
     """Generate a unique cache key based on request parameters"""
-    key_string = f"{request.topicID}_{request.chapterID}_{request.subjectID}_{request.level}"
+    key_string = f"{request.topic_id}_{request.chapter_id}_{request.subject_id}_{request.level}"
     cache_key = hashlib.md5(key_string.encode()).hexdigest()
     logger.debug(f"Generated cache key: {cache_key} for topic: {request.topic}")
     return cache_key
@@ -170,11 +141,11 @@ def save_html_to_cache(cache_key: str, html_content: str, request: SimulationReq
         insert_simulation(
             cache_key=cache_key,
             topic=request.topic,
-            topic_id=request.topicID,
+            topic_id=request.topic_id,
             chapter=request.chapter,
-            chapter_id=request.chapterID,
+            chapter_id=request.chapter_id,
             subject=request.subject,
-            subject_id=request.subjectID,
+            subject_id=request.subject_id,
             level=request.level,
             simulation_type="auto",
             file_path=str(file_path)
@@ -467,7 +438,3 @@ def clear_cache():
         logger.error(f"Error clearing cache: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error clearing cache: {str(e)}")
 
-
-if __name__ == "__main__":
-    logger.info("Starting uvicorn server...")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
