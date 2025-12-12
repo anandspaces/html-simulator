@@ -39,11 +39,11 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 cache_key TEXT UNIQUE NOT NULL,
                 topic TEXT NOT NULL,
-                topic_id TEXT NOT NULL,
+                topic_id INTEGER NOT NULL,
                 chapter TEXT NOT NULL,
-                chapter_id TEXT NOT NULL,
+                chapter_id INTEGER NOT NULL,
                 subject TEXT NOT NULL,
-                subject_id TEXT NOT NULL,
+                subject_id INTEGER NOT NULL,
                 level INTEGER NOT NULL,
                 simulation_type TEXT NOT NULL,
                 file_path TEXT NOT NULL,
@@ -75,11 +75,11 @@ def init_db():
 def insert_simulation(
     cache_key: str,
     topic: str,
-    topic_id: str,
+    topic_id: int,
     chapter: str,
-    chapter_id: str,
+    chapter_id: int,
     subject: str,
-    subject_id: str,
+    subject_id: int,
     level: int,
     simulation_type: str,
     file_path: str
@@ -136,7 +136,6 @@ def get_simulation_by_cache_key(cache_key: str) -> Optional[Dict]:
 def get_all_simulations(
     limit: Optional[int] = None,
     offset: int = 0,
-    subject_id: Optional[str] = None,
     level: Optional[int] = None
 ) -> List[Dict]:
     """Get all simulation records with optional filtering"""
@@ -145,10 +144,6 @@ def get_all_simulations(
         
         query = "SELECT * FROM simulations WHERE 1=1"
         params = []
-        
-        if subject_id:
-            query += " AND subject_id = ?"
-            params.append(subject_id)
         
         if level is not None:
             query += " AND level = ?"
@@ -166,7 +161,6 @@ def get_all_simulations(
 
 
 def get_simulation_count(
-    subject_id: Optional[str] = None,
     level: Optional[int] = None
 ) -> int:
     """Get total count of simulations with optional filtering"""
@@ -175,10 +169,6 @@ def get_simulation_count(
         
         query = "SELECT COUNT(*) as count FROM simulations WHERE 1=1"
         params = []
-        
-        if subject_id:
-            query += " AND subject_id = ?"
-            params.append(subject_id)
         
         if level is not None:
             query += " AND level = ?"
@@ -262,20 +252,6 @@ def search_simulations(
         params = [search_pattern] * len(search_fields)
         
         cursor.execute(query, params)
-        
-        return [dict(row) for row in cursor.fetchall()]
-
-
-def get_simulations_by_subject_and_level(subject_id: str, level: int) -> List[Dict]:
-    """Get all simulations for a specific subject and level"""
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT * FROM simulations 
-            WHERE subject_id = ? AND level = ?
-            ORDER BY chapter_id, topic_id
-        """, (subject_id, level))
         
         return [dict(row) for row in cursor.fetchall()]
 
