@@ -9,12 +9,10 @@ services:
     env_file:
       - .env
     volumes:
-      # Persist database
-      - ./simulations.db:/app/simulations.db
+      # Use named volume for database persistence
+      - html_simulator_data:/app/data
       # Persist HTML cache
       - ./html_cache:/app/html_cache
-      # Mount source code for development (optional, comment out for production)
-      # - ./src:/app/src
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8060/"]
@@ -22,3 +20,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+
+volumes:
+  html_simulator_data:
