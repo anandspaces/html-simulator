@@ -6,11 +6,11 @@ from typing import Optional, Union
 from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, field_validator
 import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 # Import database functions
 from src.database import (
@@ -42,6 +42,12 @@ if not GEMINI_API_KEY:
     logger.error("GEMINI_API_KEY environment variable is not set")
     raise ValueError("GEMINI_API_KEY environment variable is not set")
 
+# Get base URL from environment variable
+BASE_URL = os.getenv("BASE_URL")
+# Remove trailing slash if present
+BASE_URL = BASE_URL.rstrip("/")
+logger.info(f"Base URL configured: {BASE_URL}")
+
 genai.configure(api_key=GEMINI_API_KEY)
 MODEL_NAME = "gemini-3-pro-preview"
 logger.info(f"Gemini API configured with model: {MODEL_NAME}")
@@ -58,7 +64,8 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("="*50)
     logger.info("HTML Simulator API Starting Up")
-    logger.info(f"Version: 0.1.0")
+    logger.info(f"Version: 0.2.0")
+    logger.info(f"Base URL: {BASE_URL}")
     logger.info(f"Cache Directory: {CACHE_DIR}")
     logger.info("="*50)
     
@@ -69,14 +76,17 @@ async def lifespan(app: FastAPI):
 
 
 # Initialize FastAPI app with lifespan
-app = FastAPI(title="HTML Simulator API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="HTML Simulator API", version="0.2.0", lifespan=lifespan)
+
+# Mount static files directory to serve HTML files
+app.mount("/static", StaticFiles(directory=str(CACHE_DIR)), name="static")
 
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -104,6 +114,20 @@ class SimulationRequest(BaseModel):
                 raise ValueError(f"ID must be a valid integer, got: {v}")
         return v
 
+
+class SimulationResponse(BaseModel):
+    """Response model for simulation generation"""
+    cache_key: str
+    file_url: str
+    topic: str
+    chapter: str
+    subject: str
+    level: int
+    cached: bool
+    created_at: Optional[str] = None
+    message: str
+
+
 def generate_cache_key(request: SimulationRequest) -> str:
     """Generate a unique cache key based on request parameters"""
     key_string = f"{request.topic_id}_{request.chapter_id}_{request.subject_id}_{request.level}"
@@ -112,24 +136,28 @@ def generate_cache_key(request: SimulationRequest) -> str:
     return cache_key
 
 
-def get_cached_html(cache_key: str) -> Optional[str]:
-    """Retrieve cached HTML if it exists"""
+def get_file_url(cache_key: str) -> str:
+    """Generate the full URL for accessing the HTML file"""
+    file_name = f"{cache_key}.html"
+    return f"{BASE_URL}/static/{file_name}"
+
+
+def get_cached_simulation(cache_key: str) -> Optional[dict]:
+    """Retrieve cached simulation metadata if it exists"""
     try:
         simulation = get_simulation_by_cache_key(cache_key)
         
         if simulation:
             file_path = Path(simulation["file_path"])
             if file_path.exists():
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
                 logger.info(f"Retrieved cached simulation: {cache_key} (Topic: {simulation.get('topic')})")
-                return content
+                return simulation
             else:
                 logger.warning(f"Database entry exists but file not found: {file_path}")
         
         return None
     except Exception as e:
-        logger.error(f"Error retrieving cached HTML for key {cache_key}: {str(e)}")
+        logger.error(f"Error retrieving cached simulation for key {cache_key}: {str(e)}")
         return None
 
 
@@ -235,24 +263,26 @@ def read_root():
     logger.info("Root endpoint accessed")
     return {
         "message": "HTML Simulator API",
-        "version": "0.1.0",
+        "version": "0.2.0",
+        "base_url": BASE_URL,
         "endpoints": {
-            "/generate": "POST - Generate HTML simulation",
+            "/generate": "POST - Generate HTML simulation (returns JSON with file URL)",
             "/simulations": "GET - List all cached simulations (with pagination)",
             "/simulations/search": "GET - Search simulations",
             "/simulations/stats": "GET - Get database statistics",
-            "/simulations/{cache_key}": "GET - Get specific simulation",
+            "/simulations/{cache_key}": "GET - Get specific simulation metadata (JSON)",
             "/simulations/{cache_key}": "DELETE - Delete specific simulation",
-            "/cache/clear": "DELETE - Clear all cache"
+            "/cache/clear": "DELETE - Clear all cache",
+            "/static/{filename}": "GET - Access HTML files directly"
         }
     }
 
 
-@app.post("/generate", response_class=HTMLResponse)
+@app.post("/generate", response_model=SimulationResponse)
 async def generate_simulation(request: SimulationRequest):
     """
     Generate an interactive HTML simulation for educational purposes.
-    Returns cached version if already generated, otherwise creates new one using Gemini.
+    Returns JSON with file URL. Uses cached version if already generated.
     """
     
     logger.info(f"Generation request received - Topic: {request.topic}, Subject: {request.subject}, Level: {request.level}")
@@ -262,10 +292,20 @@ async def generate_simulation(request: SimulationRequest):
         cache_key = generate_cache_key(request)
         
         # Check if cached version exists
-        cached_html = get_cached_html(cache_key)
-        if cached_html:
+        cached_simulation = get_cached_simulation(cache_key)
+        if cached_simulation:
             logger.info(f"Returning cached simulation for key: {cache_key}")
-            return HTMLResponse(content=cached_html, status_code=200)
+            return SimulationResponse(
+                cache_key=cache_key,
+                file_url=get_file_url(cache_key),
+                topic=cached_simulation["topic"],
+                chapter=cached_simulation["chapter"],
+                subject=cached_simulation["subject"],
+                level=cached_simulation["level"],
+                cached=True,
+                created_at=cached_simulation.get("created_at"),
+                message="Simulation retrieved from cache"
+            )
         
         logger.info(f"No cache found, generating new simulation for key: {cache_key}")
         
@@ -276,7 +316,18 @@ async def generate_simulation(request: SimulationRequest):
         save_html_to_cache(cache_key, html_content, request)
         
         logger.info(f"Successfully generated and cached new simulation for key: {cache_key}")
-        return HTMLResponse(content=html_content, status_code=201)
+        
+        return SimulationResponse(
+            cache_key=cache_key,
+            file_url=get_file_url(cache_key),
+            topic=request.topic,
+            chapter=request.chapter,
+            subject=request.subject,
+            level=request.level,
+            cached=False,
+            created_at=datetime.now().isoformat(),
+            message="Simulation generated successfully"
+        )
     
     except Exception as e:
         logger.error(f"Error in generate_simulation endpoint: {str(e)}", exc_info=True)
@@ -298,6 +349,10 @@ def list_simulations(
             offset=offset,
             level=level
         )
+        
+        # Add file_url to each simulation
+        for sim in simulations:
+            sim["file_url"] = get_file_url(sim["cache_key"])
         
         total = get_simulation_count(level=level)
         
@@ -330,6 +385,10 @@ def search_simulations_endpoint(
         
         results = search_simulations(q, search_fields)
         
+        # Add file_url to each result
+        for result in results:
+            result["file_url"] = get_file_url(result["cache_key"])
+        
         logger.info(f"Search returned {len(results)} results for query: '{q}'")
         
         return {
@@ -356,19 +415,22 @@ def get_simulation_statistics():
         raise HTTPException(status_code=500, detail=f"Error retrieving statistics: {str(e)}")
 
 
-@app.get("/simulations/{cache_key}", response_class=HTMLResponse)
+@app.get("/simulations/{cache_key}")
 def get_simulation(cache_key: str):
-    """Get a specific simulation HTML by cache key"""
-    logger.info(f"Fetching simulation with cache_key: {cache_key}")
+    """Get a specific simulation metadata by cache key (returns JSON)"""
+    logger.info(f"Fetching simulation metadata with cache_key: {cache_key}")
     
     try:
-        html_content = get_cached_html(cache_key)
+        simulation = get_cached_simulation(cache_key)
         
-        if not html_content:
+        if not simulation:
             logger.warning(f"Simulation not found for cache_key: {cache_key}")
             raise HTTPException(status_code=404, detail="Simulation not found")
         
-        return HTMLResponse(content=html_content, status_code=200)
+        # Add file_url to response
+        simulation["file_url"] = get_file_url(cache_key)
+        
+        return simulation
     except HTTPException:
         raise
     except Exception as e:
@@ -445,4 +507,3 @@ def clear_cache():
     except Exception as e:
         logger.error(f"Error clearing cache: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error clearing cache: {str(e)}")
-
