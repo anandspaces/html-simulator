@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, field_validator
 import google.generativeai as genai
 from dotenv import load_dotenv
-import uvicorn
+from fastapi.middleware.cors import CORSMiddleware
 
 # Import database functions
 from src.database import (
@@ -71,6 +71,14 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI app with lifespan
 app = FastAPI(title="HTML Simulator API", version="0.1.0", lifespan=lifespan)
 
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
 
 class SimulationRequest(BaseModel):
     topic: str
