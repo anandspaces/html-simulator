@@ -128,6 +128,46 @@ class SimulationResponse(BaseModel):
     message: str
 
 
+
+class CacheCheckRequest(BaseModel):
+    topic: str
+    topic_id: Union[int, str, None] = None
+    chapter: str
+    chapter_id: Union[int, str, None] = None
+    subject: str
+    subject_id: Union[int, str, None] = None
+    level: int
+    
+    @field_validator('topic_id', 'chapter_id', 'subject_id', mode='before')
+    @classmethod
+    def convert_to_int(cls, v):
+        """Convert string IDs to integers"""
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str):
+            try:
+                return int(v)
+            except ValueError:
+                raise ValueError(f"ID must be a valid integer, got: {v}")
+        return v
+
+
+class CacheCheckResponse(BaseModel):
+    """Response model for cache check"""
+    cached: bool
+    cache_key: str
+    file_url: Optional[str] = None
+    topic: str
+    chapter: str
+    subject: str
+    level: int
+    created_at: Optional[str] = None
+    access_count: Optional[int] = None
+    message: str
+
+
 def generate_cache_key(request: SimulationRequest) -> str:
     """Generate a unique cache key based on request parameters"""
     key_string = f"{request.topic_id}_{request.chapter_id}_{request.subject_id}_{request.level}"
@@ -507,3 +547,50 @@ def clear_cache():
     except Exception as e:
         logger.error(f"Error clearing cache: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error clearing cache: {str(e)}")
+    
+@app.post("/check_cache", response_model=CacheCheckResponse)
+async def check_cache(request: CacheCheckRequest):
+    """
+    Check if a simulation already exists in cache without generating a new one.
+    Returns cache status and file URL if cached.
+    """
+    
+    logger.info(f"Cache check request - Topic: {request.topic}, Subject: {request.subject}, Level: {request.level}")
+    
+    try:
+        # Generate cache key
+        cache_key = generate_cache_key(request)
+        
+        # Check if cached version exists
+        cached_simulation = get_cached_simulation(cache_key)
+        
+        if cached_simulation:
+            logger.info(f"Cache HIT for key: {cache_key}")
+            return CacheCheckResponse(
+                cached=True,
+                cache_key=cache_key,
+                file_url=get_file_url(cache_key),
+                topic=cached_simulation["topic"],
+                chapter=cached_simulation["chapter"],
+                subject=cached_simulation["subject"],
+                level=cached_simulation["level"],
+                created_at=cached_simulation.get("created_at"),
+                access_count=cached_simulation.get("access_count", 0),
+                message="Simulation found in cache"
+            )
+        else:
+            logger.info(f"Cache MISS for key: {cache_key}")
+            return CacheCheckResponse(
+                cached=False,
+                cache_key=cache_key,
+                file_url=None,
+                topic=request.topic,
+                chapter=request.chapter,
+                subject=request.subject,
+                level=request.level,
+                message="Simulation not found in cache"
+            )
+    
+    except Exception as e:
+        logger.error(f"Error in check_cache endpoint: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error checking cache: {str(e)}")
